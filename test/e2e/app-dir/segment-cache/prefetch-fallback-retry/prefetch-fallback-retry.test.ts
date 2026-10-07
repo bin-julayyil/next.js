@@ -126,10 +126,8 @@ describe('segment cache prefetch fallback retry', () => {
     // concrete version — the client keeps receiving the fallback shell on every
     // retry. (Uses its own un-enumerated param so it doesn't share an ISR entry
     // with the recovery test above.)
-    const getRequestCount = await simulateNeverUpgradingIsrEntries(
-      page,
-      '/posts/retry-limit'
-    )
+    const { getRequestCount, getRuntimeRequestCount } =
+      await simulateNeverUpgradingIsrEntries(page, '/posts/retry-limit')
 
     await browser
       .elementByCss('input[data-link-accordion="/posts/retry-limit"]')
@@ -148,6 +146,9 @@ describe('segment cache prefetch fallback retry', () => {
     // The initial prefetch plus a small, fixed number of retries — never a
     // runaway loop.
     expect(getRequestCount()).toBeLessThan(5)
+    // The link asks for more than the shell, so once the retries give up, it
+    // sends one runtime request instead.
+    expect(getRuntimeRequestCount()).toBe(1)
   })
 })
 
@@ -163,21 +164,32 @@ describe('segment cache prefetch fallback retry', () => {
  * concrete version — which is exactly what we want to prevent when testing the
  * retry *limit*.)
  *
- * Returns a getter for the number of intercepted segment-bundle requests.
+ * Returns getters for the number of intercepted segment-bundle requests, and
+ * the number of runtime prefetches for the same page.
  */
 async function simulateNeverUpgradingIsrEntries(
   page: Playwright.Page,
   pathname: string
-): Promise<() => number> {
+): Promise<{
+  getRequestCount: () => number
+  getRuntimeRequestCount: () => number
+}> {
   const cachedResponses = new Map<
     string,
     { body: Buffer; headers: Record<string, string>; status: number }
   >()
   let requestCount = 0
+  let runtimeRequestCount = 0
   await page.route('**/*', async (route) => {
     const request = route.request()
     const headers = request.headers()
     const segmentKey = headers['next-router-segment-prefetch']
+    if (
+      headers['next-router-prefetch'] === '2' &&
+      new URL(request.url()).pathname === pathname
+    ) {
+      runtimeRequestCount++
+    }
     const isSegmentBundlePrefetch =
       headers['next-router-prefetch'] !== undefined &&
       segmentKey !== undefined &&
@@ -208,5 +220,8 @@ async function simulateNeverUpgradingIsrEntries(
     }
     await route.fulfill(cached)
   })
-  return () => requestCount
+  return {
+    getRequestCount: () => requestCount,
+    getRuntimeRequestCount: () => runtimeRequestCount,
+  }
 }
