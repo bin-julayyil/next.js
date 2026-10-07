@@ -17,6 +17,7 @@ import {
   NEXT_ROUTER_PREFETCH_STATIC,
   NEXT_ROUTER_PREFETCH_RUNTIME_PREFETCH,
   NEXT_ROUTER_PREFETCH_RUNTIME_SHELL,
+  NEXT_ROUTER_PREFETCH_RUNTIME_NAVIGATION,
   NEXT_ROUTER_SEGMENT_PREFETCH_HEADER,
   NEXT_ROUTER_STALE_TIME_HEADER,
   NEXT_ROUTER_STATE_TREE_HEADER,
@@ -2628,12 +2629,23 @@ export async function fetchSegmentPrefetchesUsingRuntimeRequest(
       // essentially just a navigation request that happens ahead of time —
       // it should include all the same data in the response.
     }
-  } else if (stage === AppStage.Shell) {
-    // A runtime prefetch of the shell.
-    headers[NEXT_ROUTER_PREFETCH_HEADER] = NEXT_ROUTER_PREFETCH_RUNTIME_SHELL
   } else {
-    // A runtime prefetch up to the prefetch stage.
-    headers[NEXT_ROUTER_PREFETCH_HEADER] = NEXT_ROUTER_PREFETCH_RUNTIME_PREFETCH
+    switch (stage) {
+      case AppStage.Shell:
+        headers[NEXT_ROUTER_PREFETCH_HEADER] =
+          NEXT_ROUTER_PREFETCH_RUNTIME_SHELL
+        break
+      case AppStage.Prefetch:
+        headers[NEXT_ROUTER_PREFETCH_HEADER] =
+          NEXT_ROUTER_PREFETCH_RUNTIME_PREFETCH
+        break
+      case AppStage.Navigation:
+        headers[NEXT_ROUTER_PREFETCH_HEADER] =
+          NEXT_ROUTER_PREFETCH_RUNTIME_NAVIGATION
+        break
+      default:
+        stage satisfies never
+    }
   }
 
   try {
@@ -2776,7 +2788,8 @@ export async function fetchSegmentPrefetchesUsingRuntimeRequest(
       serverData.u !== undefined &&
       readFulfilledValue(serverData.u, false, /* rejectedValue */ true) ===
         true &&
-      (prefetchStageResponse?.u === undefined ||
+      (stage === AppStage.Navigation ||
+        prefetchStageResponse?.u === undefined ||
         readFulfilledValue(
           prefetchStageResponse.u,
           false,
@@ -2787,7 +2800,9 @@ export async function fetchSegmentPrefetchesUsingRuntimeRequest(
       // still needs runtime data, for example a stale prerender. A runtime
       // request that comes back short of what it asked for is a failed
       // attempt. We still write the payload, but we reject the spawned
-      // entries, so their backoff limits how often we retry.
+      // entries, so their backoff limits how often we retry. A link that
+      // asked for the navigation stage can't use a prerender that read
+      // runtime data at all, even if its prefetch stage is cache complete.
       rejectSegmentEntriesIfStillPending(
         spawnedEntries,
         now + REJECTION_BACKOFF_MS
