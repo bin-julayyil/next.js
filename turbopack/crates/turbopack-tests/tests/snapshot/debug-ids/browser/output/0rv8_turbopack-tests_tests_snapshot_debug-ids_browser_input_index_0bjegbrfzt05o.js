@@ -1,4 +1,4 @@
-;!function(){try { var e="undefined"!=typeof globalThis?globalThis:"undefined"!=typeof global?global:"undefined"!=typeof window?window:"undefined"!=typeof self?self:{},n=(new e.Error).stack;n&&((e._debugIds|| (e._debugIds={}))[n]="c43766b6-b61f-49ce-2bc6-d270f17e82af")}catch(e){}}();
+;!function(){try { var e="undefined"!=typeof globalThis?globalThis:"undefined"!=typeof global?global:"undefined"!=typeof window?window:"undefined"!=typeof self?self:{},n=(new e.Error).stack;n&&((e._debugIds|| (e._debugIds={}))[n]="cf744169-c64c-3f9b-106e-deb5992ddb3e")}catch(e){}}();
 (globalThis["TURBOPACK"] || (globalThis["TURBOPACK"] = [])).push([
     "output/0rv8_turbopack-tests_tests_snapshot_debug-ids_browser_input_index_0bjegbrfzt05o.js",
     {"otherChunks":["output/0_9x_turbopack-tests_tests_snapshot_debug-ids_browser_input_index_03ibyvsq4xsbk.js"],"runtimeModuleIds":["[project]/turbopack/crates/turbopack-tests/tests/snapshot/debug-ids/browser/input/index.js [test] (ecmascript)"]}
@@ -2287,6 +2287,56 @@ function getAssetSuffixFromScriptSrc() {
     const qi = src.indexOf('?');
     return qi >= 0 ? src.slice(qi) : '';
 }
+/**
+ * Whether a `src` / `href` attribute value refers to `url`: either exactly, or
+ * with an additional query string (e.g. `?dpl=...`). Also matches the decoded
+ * form of `url`.
+ *
+ * TODO(PACK-2140): drop the decoded variant once all filenames are guaranteed
+ * to be escaped.
+ */ function matchesChunkUrl(value, url, decodedUrl) {
+    return value != null && (value === url || value.startsWith(url + '?') || value === decodedUrl || value.startsWith(decodedUrl + '?'));
+}
+// These lookups iterate the tag collection and compare attribute values as
+// plain strings. A document-wide `querySelectorAll` with attribute selectors
+// costs time proportional to the size of the whole DOM on every call, and
+// would need the URL to be CSS-escaped.
+/**
+ * Returns all `<script>` elements in the document whose `src` refers to `url`.
+ */ function findChunkScripts(url) {
+    const decodedUrl = decodeURI(url);
+    const scripts = document.getElementsByTagName('script');
+    const result = [];
+    for(let i = 0; i < scripts.length; i++){
+        const script = scripts[i];
+        if (matchesChunkUrl(script.getAttribute('src'), url, decodedUrl)) {
+            result.push(script);
+        }
+    }
+    return result;
+}
+/**
+ * Returns all `<link>` elements in the document whose `href` refers to `url`.
+ * With `stylesheetsOnly`, only links whose `rel` is exactly `stylesheet`
+ * (ASCII case-insensitive) are returned.
+ */ function findChunkLinks(url, stylesheetsOnly = false) {
+    const decodedUrl = decodeURI(url);
+    const links = document.getElementsByTagName('link');
+    const result = [];
+    for(let i = 0; i < links.length; i++){
+        const link = links[i];
+        if ((!stylesheetsOnly || link.getAttribute('rel')?.toLowerCase() === 'stylesheet') && matchesChunkUrl(link.getAttribute('href'), url, decodedUrl)) {
+            result.push(link);
+        }
+    }
+    return result;
+}
+/**
+ * Returns all `<link rel=stylesheet>` elements in the document whose `href`
+ * refers to `url`.
+ */ function findChunkStylesheets(url) {
+    return findChunkLinks(url, true);
+}
 let BACKEND;
 /**
  * Maps chunk paths to the corresponding resolver.
@@ -2426,10 +2476,8 @@ let BACKEND;
                 throw new Error(`can't infer type of chunk from URL ${chunkUrl} in worker`);
             }
         } else {
-            // TODO(PACK-2140): remove this once all filenames are guaranteed to be escaped.
-            const decodedChunkUrl = decodeURI(chunkUrl);
             if (isCss(chunkUrl)) {
-                const previousLinks = document.querySelectorAll(`link[rel=stylesheet][href="${chunkUrl}"],link[rel=stylesheet][href^="${chunkUrl}?"],link[rel=stylesheet][href="${decodedChunkUrl}"],link[rel=stylesheet][href^="${decodedChunkUrl}?"]`);
+                const previousLinks = findChunkStylesheets(chunkUrl);
                 if (previousLinks.length > 0) {
                     // CSS chunks do not register themselves, and as such must be marked as
                     // loaded instantly.
@@ -2458,9 +2506,9 @@ let BACKEND;
                     document.head.appendChild(createLink());
                 }
             } else if (isJs(chunkUrl)) {
-                const previousScripts = document.querySelectorAll(`script[src="${chunkUrl}"],script[src^="${chunkUrl}?"],script[src="${decodedChunkUrl}"],script[src^="${decodedChunkUrl}?"]`);
+                const previousScripts = findChunkScripts(chunkUrl);
                 if (previousScripts.length > 0) {
-                    for (const script of Array.from(previousScripts)){
+                    for (const script of previousScripts){
                         script.addEventListener('error', ()=>{
                             // Drop the failed tag so a retry can re-add it cleanly.
                             script.remove();
@@ -2509,11 +2557,8 @@ let DEV_BACKEND;
             // Strip query string so we match links regardless of cache-busting
             // params (e.g. ?ts=) that may differ between HMR updates.
             const baseChunkUrl = chunkUrl.split('?')[0];
-            // TODO(PACK-2140): remove this once all filenames are guaranteed to be escaped.
-            const decodedBaseChunkUrl = decodeURI(baseChunkUrl);
             if (isCss(chunkUrl)) {
-                const links = document.querySelectorAll(`link[href="${baseChunkUrl}"],link[href^="${baseChunkUrl}?"],link[href="${decodedBaseChunkUrl}"],link[href^="${decodedBaseChunkUrl}?"]`);
-                for (const link of Array.from(links)){
+                for (const link of findChunkLinks(baseChunkUrl)){
                     link.remove();
                 }
             } else if (isJs(chunkUrl)) {
@@ -2521,8 +2566,7 @@ let DEV_BACKEND;
                 // runtime once evaluated.
                 // However, we still want to remove the script tag from the DOM to keep
                 // the HTML somewhat consistent from the user's perspective.
-                const scripts = document.querySelectorAll(`script[src="${baseChunkUrl}"],script[src^="${baseChunkUrl}?"],script[src="${decodedBaseChunkUrl}"],script[src^="${decodedBaseChunkUrl}?"]`);
-                for (const script of Array.from(scripts)){
+                for (const script of findChunkScripts(baseChunkUrl)){
                     script.remove();
                 }
             } else {
@@ -2538,8 +2582,7 @@ let DEV_BACKEND;
                 // Strip query string so we match links regardless of cache-busting
                 // params (e.g. ?ts=) that may differ between HMR updates.
                 const baseChunkUrl = chunkUrl.split('?')[0];
-                const decodedBaseChunkUrl = decodeURI(baseChunkUrl);
-                const previousLinks = document.querySelectorAll(`link[rel=stylesheet][href="${baseChunkUrl}"],link[rel=stylesheet][href^="${baseChunkUrl}?"],link[rel=stylesheet][href="${decodedBaseChunkUrl}"],link[rel=stylesheet][href^="${decodedBaseChunkUrl}?"]`);
+                const previousLinks = findChunkStylesheets(baseChunkUrl);
                 const link = document.createElement('link');
                 link.rel = 'stylesheet';
                 link.crossOrigin = CROSS_ORIGIN;
@@ -2569,7 +2612,7 @@ let DEV_BACKEND;
                     // First load the new CSS, then remove the old ones. This prevents visible
                     // flickering that would happen in-between removing the previous CSS and
                     // loading the new one.
-                    for (const previousLink of Array.from(previousLinks))previousLink.remove();
+                    for (const previousLink of previousLinks)previousLink.remove();
                     // CSS chunks do not register themselves, and as such must be marked as
                     // loaded instantly.
                     resolve();
@@ -2614,5 +2657,5 @@ chunkListsToRegister.forEach(registerChunkList);
 })();
 
 
-//# debugId=c43766b6-b61f-49ce-2bc6-d270f17e82af
+//# debugId=cf744169-c64c-3f9b-106e-deb5992ddb3e
 //# sourceMappingURL=0_9x_turbopack-tests_tests_snapshot_debug-ids_browser_input_index_0bjegbrfzt05o.js.map
